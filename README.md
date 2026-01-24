@@ -70,20 +70,25 @@ The tool generates detailed professional reports to help security teams identify
 #  USAGE EXAMPLES:
 
   ### Full comprehensive scan
-    python3 CYS_ilm_recon_tool.py example.com --all --output html
+    python3 cysilm_recon_tool.py example.com --all --output html
   
   ### Passive reconnaissance only
-    python3 CYS_ilm_recon_tool.py example.com --passive --dns --subdomains --output txt
+    python3 cysilm_recon_tool.py example.com --passive --dns --subdomains --output txt
   
   ### Active reconnaissance only
-    python3 CYS_ilm_recon_tool.py example.com --active --scan --tech --output txt
+    python3 cysilm_recon_tool.py example.com --active --scan --tech --output txt
   
   ### Quick security assessment
-    python3 CYS_ilm_recon_tool.py example.com --quick --output html
+    python3 cysilm_recon_tool.py example.com --quick --output html
   
   ### Custom port scan
-    python3 CYS_ilm_recon_tool.py example.com --active --ports 1-1000 --scan-type quick --output html
+    python3 cysilm_recon_tool.py example.com --active --ports 1-1000 --scan-type quick --output html
   
   ### Specific modules only
-    python3 CYS_ilm_recon_tool.py example.com --whois --dns --tech -v --output txt
+    python3 cysilm_recon_tool.py example.com --whois --dns --tech -v --output txt
 
+## ** Author**
+Developed by CYS-ilm with the help of AI.
+
+## **⚠️ Disclaimer**
+This tool is for **educational purposes and authorized security testing only**. Always obtain explicit permission before scanning any system. The developers are not responsible for misuse.
