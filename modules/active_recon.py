@@ -97,7 +97,7 @@ class ActiveReconnaissance:
                     logger.warning("Root privileges required, falling back to TCP connect scan")
                     # Fallback to non-privileged scan
                     nmap_args = self._build_nmap_arguments('tcp_connect', timing)
-                    self.nm.scan(target, ports, arguments=nap_args, timeout=300)
+                    self.nm.scan(target, ports, arguments=nmap_args, timeout=300)
                 else:
                     raise
             
@@ -751,4 +751,5 @@ class ActiveReconnaissance:
                 })
         
         logger.info(f"Health check completed: {'Alive' if results['is_alive'] else 'Not responding'}")
+
         return results
