@@ -64,21 +64,5 @@ The tool generates detailed professional reports to help security teams identify
 
                     python3 cysilm_recon_tool.py --help
 
-
-## **🔁 Quick Commands Summary:**
-
-# 1. Clone
-                    https://github.com/CYS-ilm/CYS-ilm_Recon_Tool.git
-                    cd CYS-ilm_Recon_Tool
-
-# 2. Setup venv
-                    python3 -m venv venv
-                    source venv/bin/activate
-
-# 3. Install
-                    pip install -r requirements.txt
-
-# 4. Verify
-                    python3 cysilm_recon_tool.py --help
-
 **When done:** Type `deactivate` to exit virtual environment.
+
