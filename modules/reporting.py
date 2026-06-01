@@ -1,955 +1,494 @@
 """
-Professional Reporting Module
-Generate comprehensive reports in multiple formats
+Professional Reporting Module – CYS-ILM v3.0
+Generates Text, HTML (self-contained), and JSON reports.
 """
 
 import json
+import logging
 import os
 from datetime import datetime
-from typing import Dict, Any, List
-import logging
+from typing import Any, Dict, List
+
 from jinja2 import Template
+
+logger = logging.getLogger(__name__)
+
+# ── severity colours ─────────────────────────────────────────────
+_SEV_COLOUR = {
+    "HIGH":   "#dc3545",
+    "MEDIUM": "#fd7e14",
+    "LOW":    "#28a745",
+    "INFO":   "#17a2b8",
+}
+_RISK_COLOUR = {
+    "HIGH":   "#dc3545",
+    "MEDIUM": "#fd7e14",
+    "LOW":    "#28a745",
+    "INFO":   "#17a2b8",
+}
 
 
 class ReportGenerator:
-    """Generate professional reconnaissance reports."""
-    
-    def __init__(self, results: Dict[str, Any], output_dir: str = "outputs"):
-        """Initialize report generator.
-        
-        Args:
-            results: Reconnaissance results
-            output_dir: Output directory
-        """
-        self.logger = logging.getLogger(__name__)
-        self.results = results
+    """Generate professional security assessment reports."""
+
+    def __init__(self, results: Dict[str, Any], output_dir: str = "outputs") -> None:
+        self.results    = results
         self.output_dir = output_dir
-        self.timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        
-        # Create output directory
+        self.ts         = datetime.now().strftime("%Y%m%d_%H%M%S")
+        self.target     = results["metadata"]["target"]
         os.makedirs(output_dir, exist_ok=True)
-    
+
+    # ── public methods ────────────────────────────────────────────
     def generate_text_report(self) -> str:
-        """Generate comprehensive text report."""
-        try:
-            target = self.results['metadata']['target']
-            filename = f"recon_{target}_{self.timestamp}.txt"
-            filepath = os.path.join(self.output_dir, filename)
-            
-            with open(filepath, 'w', encoding='utf-8') as f:
-                f.write(self._format_text_report())
-            
-            self.logger.info(f"Text report saved to {filepath}")
-            return filepath
-            
-        except Exception as e:
-            self.logger.error(f"Failed to generate text report: {str(e)}")
-            raise
-    
+        path = os.path.join(self.output_dir, f"recon_{self.target}_{self.ts}.txt")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(self._text())
+        logger.info(f"Text report  → {path}")
+        return path
+
     def generate_html_report(self) -> str:
-        """Generate professional HTML report."""
-        try:
-            target = self.results['metadata']['target']
-            filename = f"recon_{target}_{self.timestamp}.html"
-            filepath = os.path.join(self.output_dir, filename)
-            
-            # Generate HTML content
-            html_content = self._generate_html_content()
-            
-            # Write to file
-            with open(filepath, 'w', encoding='utf-8') as f:
-                f.write(html_content)
-            
-            self.logger.info(f"HTML report saved to {filepath}")
-            return filepath
-            
-        except Exception as e:
-            self.logger.error(f"Failed to generate HTML report: {str(e)}")
-            raise
-    
+        path = os.path.join(self.output_dir, f"recon_{self.target}_{self.ts}.html")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(self._html())
+        logger.info(f"HTML report  → {path}")
+        return path
+
     def generate_json_report(self) -> str:
-        """Generate JSON report with all data."""
-        try:
-            target = self.results['metadata']['target']
-            filename = f"recon_{target}_{self.timestamp}.json"
-            filepath = os.path.join(self.output_dir, filename)
-            
-            with open(filepath, 'w', encoding='utf-8') as f:
-                json.dump(self.results, f, indent=2, default=str)
-            
-            self.logger.info(f"JSON report saved to {filepath}")
-            return filepath
-            
-        except Exception as e:
-            self.logger.error(f"Failed to generate JSON report: {str(e)}")
-            raise
-    
-    def generate_executive_summary(self) -> str:
-        """Generate executive summary."""
-        summary = []
-        
-        # Header
-        summary.append("=" * 70)
-        summary.append("EXECUTIVE SUMMARY")
-        summary.append("=" * 70)
-        summary.append(f"Target: {self.results['metadata']['target']}")
-        summary.append(f"Scan ID: {self.results['metadata']['scan_id']}")
-        summary.append(f"Date: {self.results['metadata']['start_time']}")
-        summary.append("")
-        
-        # Risk Assessment
-        risk = self.results.get('risk_assessment', {})
-        if risk:
-            summary.append("RISK ASSESSMENT:")
-            summary.append(f"  Risk Level: {risk.get('risk_level', 'N/A')}")
-            summary.append(f"  Risk Score: {risk.get('risk_score', 'N/A')}/100")
-            summary.append("")
-        
-        # Key Findings
-        summary.append("KEY FINDINGS:")
-        
-        # Open ports
-        active = self.results.get('active', {})
-        port_scan = active.get('port_scan', {})
-        open_ports = port_scan.get('open_ports', [])
-        if open_ports:
-            summary.append(f"  • Open Ports: {len(open_ports)} discovered")
-            critical_ports = [p['port'] for p in open_ports if p['port'] in [22, 23, 21, 3389]]
-            if critical_ports:
-                summary.append(f"    Critical services: {', '.join(map(str, critical_ports))}")
-        
-        # Subdomains
-        passive = self.results.get('passive', {})
-        subdomains = passive.get('subdomains', {})
-        if subdomains:
-            valid_count = subdomains.get('total_valid', 0)
-            if valid_count > 0:
-                summary.append(f"  • Subdomains: {valid_count} discovered")
-        
-        # Technologies
-        technologies = active.get('technologies', {})
-        tech_count = sum(len(techs) for techs in technologies.values())
-        if tech_count > 0:
-            summary.append(f"  • Technologies: {tech_count} identified")
-        
-        # Vulnerabilities
-        vuln_checks = active.get('vulnerability_checks', {})
-        if vuln_checks.get('issues'):
-            summary.append(f"  • Security Issues: {len(vuln_checks['issues'])} found")
-        
-        summary.append("")
-        summary.append("DETAILED REPORTS:")
-        summary.append("  • Full report available in output directory")
-        summary.append("  • Risk mitigation recommendations included")
-        summary.append("=" * 70)
-        
-        return '\n'.join(summary)
-    
-    def _format_text_report(self) -> str:
-        """Format comprehensive text report."""
-        lines = []
-        
-        # Header
-        lines.append("=" * 80)
-        lines.append("CYS-ilm RECONNAISSANCE REPORT")
-        lines.append("=" * 80)
-        lines.append(f"Target: {self.results['metadata']['target']}")
-        lines.append(f"Scan ID: {self.results['metadata']['scan_id']}")
-        lines.append(f"Start Time: {self.results['metadata']['start_time']}")
-        lines.append(f"End Time: {self.results['metadata'].get('end_time', 'N/A')}")
-        lines.append(f"Tool Version: {self.results['metadata']['tool_version']}")
-        lines.append("")
-        
-        # Executive Summary
-        lines.append("EXECUTIVE SUMMARY")
-        lines.append("-" * 80)
-        lines.append(self.generate_executive_summary())
-        lines.append("")
-        
-        # Risk Assessment
-        risk = self.results.get('risk_assessment', {})
-        if risk:
-            lines.append("RISK ASSESSMENT")
-            lines.append("-" * 80)
-            lines.append(f"Risk Level: {risk.get('risk_level', 'N/A')}")
-            lines.append(f"Risk Score: {risk.get('risk_score', 'N/A')}")
-            lines.append(f"Factors: {', '.join(risk.get('factors_considered', []))}")
-            lines.append("")
-        
-        # Passive Reconnaissance
-        passive = self.results.get('passive', {})
+        path = os.path.join(self.output_dir, f"recon_{self.target}_{self.ts}.json")
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(self.results, f, indent=2, default=str)
+        logger.info(f"JSON report  → {path}")
+        return path
+
+    # ── text report ───────────────────────────────────────────────
+    def _text(self) -> str:
+        W  = 80
+        ln = "=" * W
+
+        def h1(t): return f"\n{ln}\n  {t}\n{ln}"
+        def h2(t): return f"\n  {t}\n  {'─'*40}"
+        def kv(k,v, indent=4): return f"{' '*indent}{k:<28}: {v}"
+
+        meta    = self.results["metadata"]
+        risk    = self.results.get("risk_assessment", {})
+        passive = self.results.get("passive", {})
+        active  = self.results.get("active",  {})
+        finds   = self.results.get("findings", [])
+
+        lines: List[str] = []
+        lines += [
+            ln,
+            "  CYS-ILM SECURITY RECONNAISSANCE REPORT",
+            "  Confidential — For Authorized Use Only",
+            ln,
+            kv("Target",       meta.get("target")),
+            kv("Scan ID",      meta.get("scan_id")),
+            kv("Operator",     meta.get("operator","N/A")),
+            kv("Privileged",   meta.get("privileged", False)),
+            kv("Start",        meta.get("start_time")),
+            kv("End",          meta.get("end_time","N/A")),
+            kv("Tool Version", meta.get("tool_version")),
+        ]
+
+        # Risk summary
+        lines.append(h1("RISK ASSESSMENT"))
+        lines += [
+            kv("Risk Level",       risk.get("risk_level","N/A")),
+            kv("Risk Score",       f"{risk.get('risk_score',0)}/100"),
+            kv("Total Findings",   risk.get("total_findings",0)),
+            kv("High",             risk.get("high_count",0)),
+            kv("Medium",           risk.get("medium_count",0)),
+            kv("Low",              risk.get("low_count",0)),
+        ]
+
+        # Passive
         if passive:
-            lines.append("PASSIVE RECONNAISSANCE")
-            lines.append("=" * 80)
-            
-            # WHOIS
-            if 'whois' in passive and passive['whois']:
-                lines.append("\nWHOIS INFORMATION")
-                lines.append("-" * 40)
-                whois_data = passive['whois']
-                for key, value in whois_data.items():
-                    if value and key != 'raw_data':
-                        if isinstance(value, list):
-                            lines.append(f"  {key}:")
-                            for item in value:
-                                lines.append(f"    • {item}")
-                        else:
-                            lines.append(f"  {key}: {value}")
-            
-            # DNS Records
-            if 'dns' in passive and passive['dns']:
-                lines.append("\nDNS ENUMERATION")
-                lines.append("-" * 40)
-                dns_data = passive['dns']
-                
-                # Summary
-                if 'summary' in dns_data:
-                    summary = dns_data['summary']
-                    lines.append(f"  Total Records: {summary.get('total_records', 0)}")
-                    lines.append(f"  IP Addresses: {', '.join(summary.get('ip_addresses', []))}")
-                    lines.append("")
-                
-                # Detailed records
-                if 'records' in dns_data:
-                    for record_type, records in dns_data['records'].items():
-                        if records and record_type not in ['error']:
-                            lines.append(f"  {record_type} Records:")
-                            for record in records:
-                                lines.append(f"    • {record}")
-            
-            # Subdomains
-            if 'subdomains' in passive and passive['subdomains']:
-                lines.append("\nSUBDOMAIN DISCOVERY")
-                lines.append("-" * 40)
-                subdomain_data = passive['subdomains']
-                
-                lines.append(f"  Total Discovered: {subdomain_data.get('total_discovered', 0)}")
-                lines.append(f"  Valid Subdomains: {subdomain_data.get('total_valid', 0)}")
-                
-                if 'validated_subdomains' in subdomain_data:
-                    lines.append("\n  Valid Subdomains:")
-                    for subdomain in subdomain_data['validated_subdomains'][:20]:  # First 20
-                        lines.append(f"    • {subdomain['subdomain']} ({subdomain['ip_address']})")
-                    
-                    if len(subdomain_data['validated_subdomains']) > 20:
-                        lines.append(f"    ... and {len(subdomain_data['validated_subdomains']) - 20} more")
-        
-        # Active Reconnaissance
-        active = self.results.get('active', {})
+            lines.append(h1("PASSIVE RECONNAISSANCE"))
+
+            if w := passive.get("whois"):
+                lines.append(h2("WHOIS"))
+                for k, v in w.items():
+                    if v and k != "error":
+                        val = ", ".join(v) if isinstance(v, list) else str(v)
+                        lines.append(kv(k, val[:100]))
+
+            if dns := passive.get("dns", {}).get("records"):
+                lines.append(h2("DNS RECORDS"))
+                for rtype, recs in dns.items():
+                    if recs:
+                        lines.append(f"    [{rtype}]")
+                        for r in recs:
+                            lines.append(f"      • {r}")
+
+            if subs := passive.get("subdomains", {}):
+                lines.append(h2("SUBDOMAINS"))
+                lines.append(kv("Discovered", subs.get("total_discovered",0)))
+                lines.append(kv("Valid",       subs.get("total_valid",0)))
+                for s in (subs.get("validated_subdomains") or [])[:30]:
+                    lines.append(f"      • {s['subdomain']:<45} {s.get('ip_address','')}")
+
+            if ei := passive.get("email_info"):
+                lines.append(h2("EMAIL INTELLIGENCE"))
+                lines.append(kv("MX",    ", ".join(ei.get("mx_records") or ["-"])))
+                lines.append(kv("SPF",   ei.get("spf") or "NOT FOUND"))
+                lines.append(kv("DMARC", ei.get("dmarc") or "NOT FOUND"))
+                if ei.get("dkim"):
+                    lines.append(kv("DKIM", f"{len(ei['dkim'])} selector(s) found"))
+
+        # Active
         if active:
-            lines.append("\n\nACTIVE RECONNAISSANCE")
-            lines.append("=" * 80)
-            
-            # Port Scan Results
-            if 'port_scan' in active and active['port_scan']:
-                lines.append("\nPORT SCAN RESULTS")
-                lines.append("-" * 40)
-                port_data = active['port_scan']
-                
-                stats = port_data.get('statistics', {})
-                lines.append(f"  Total Ports Scanned: {stats.get('total_ports_scanned', 0)}")
-                lines.append(f"  Open Ports: {stats.get('open_count', 0)}")
-                lines.append(f"  Filtered Ports: {stats.get('filtered_count', 0)}")
-                
-                if port_data.get('open_ports'):
-                    lines.append("\n  Open Ports Details:")
-                    for port_info in port_data['open_ports'][:15]:  # First 15
-                        lines.append(f"    • {port_info['port']}/tcp - {port_info['service']}")
-                        if port_info.get('product'):
-                            lines.append(f"      Product: {port_info['product']} {port_info.get('version', '')}")
-                        if port_info.get('script_output'):
-                            lines.append(f"      Scripts: {len(port_info['script_output'])} executed")
-            
-            # Technologies
-            if 'technologies' in active and active['technologies']:
-                lines.append("\nTECHNOLOGY DETECTION")
-                lines.append("-" * 40)
-                tech_data = active['technologies']
-                
-                for category, tech_list in tech_data.items():
-                    if tech_list and category not in ['error']:
-                        lines.append(f"  {category.replace('_', ' ').title()}:")
-                        for tech in tech_list[:10]:  # First 10
-                            lines.append(f"    • {tech}")
-                        if len(tech_list) > 10:
-                            lines.append(f"      ... and {len(tech_list) - 10} more")
-            
-            # Vulnerability Checks
-            if 'vulnerability_checks' in active and active['vulnerability_checks']:
-                lines.append("\nVULNERABILITY CHECKS")
-                lines.append("-" * 40)
-                vuln_data = active['vulnerability_checks']
-                
-                for check_type, findings in [('issues', vuln_data.get('issues', [])),
-                                           ('warnings', vuln_data.get('warnings', [])),
-                                           ('info', vuln_data.get('info', []))]:
-                    if findings:
-                        lines.append(f"  {check_type.title()}:")
-                        for finding in findings[:5]:  # First 5
-                            lines.append(f"    • {finding}")
-        
-        # Findings and Recommendations
-        findings = self.results.get('findings', [])
-        if findings:
-            lines.append("\n\nFINDINGS AND RECOMMENDATIONS")
-            lines.append("=" * 80)
-            
-            for finding in findings:
-                lines.append(f"\n[{finding.get('severity', 'INFO')}] {finding.get('title', 'N/A')}")
-                lines.append(f"Category: {finding.get('category', 'General')}")
-                lines.append(f"Description: {finding.get('description', 'N/A')}")
-                lines.append(f"Recommendation: {finding.get('recommendation', 'N/A')}")
-                lines.append("-" * 40)
-        
+            lines.append(h1("ACTIVE RECONNAISSANCE"))
+
+            if ps := active.get("port_scan", {}):
+                lines.append(h2("PORT SCAN"))
+                lines.append(kv("Scan type",  ps.get("scan_type")))
+                lines.append(kv("Ports",      ps.get("ports_scanned")))
+                lines.append(kv("Open ports", len(ps.get("open_ports",[]))))
+                for p in (ps.get("open_ports") or []):
+                    risk_flag = "  ⚠" if p.get("risk") else ""
+                    lines.append(
+                        f"      {p['port']:>5}/{p['protocol']:<4}  "
+                        f"{p['service']:<15}  {p.get('product','')} "
+                        f"{p.get('version','')}{risk_flag}"
+                    )
+
+            if hdrs := active.get("http_headers"):
+                lines.append(h2("HTTP SECURITY HEADERS"))
+                lines.append(kv("Grade",   hdrs.get("grade","N/A")))
+                lines.append(kv("Missing", ", ".join(hdrs.get("missing_headers",[]) or ["-"])))
+                for issue in hdrs.get("issues",[]):
+                    lines.append(f"      ⚠  {issue}")
+
+            if techs := active.get("technologies"):
+                lines.append(h2("TECHNOLOGIES"))
+                for cat, items in techs.items():
+                    if isinstance(items, list) and items:
+                        lines.append(f"      {cat.replace('_',' ').title():<22}: "
+                                     f"{', '.join(items)}")
+
+            if vulns := active.get("vulnerability_checks"):
+                lines.append(h2("VULNERABILITY CHECKS"))
+                for issue in vulns.get("issues",[]):
+                    lines.append(f"      [ISSUE]   {issue}")
+                for warn in vulns.get("warnings",[]):
+                    lines.append(f"      [WARN]    {warn}")
+                for info in vulns.get("info",[]):
+                    lines.append(f"      [INFO]    {info}")
+
+        # Findings
+        lines.append(h1("FINDINGS & RECOMMENDATIONS"))
+        for f in finds:
+            sev = f.get("severity","INFO")
+            lines += [
+                f"\n  [{sev}]  {f.get('title','')}",
+                f"  Category   : {f.get('category','')}",
+                f"  Description: {f.get('description','')}",
+                f"  Action     : {f.get('recommendation','')}",
+                "  " + "─"*60,
+            ]
+
         # Footer
-        lines.append("\n" + "=" * 80)
-        lines.append("END OF REPORT")
-        lines.append("=" * 80)
-        lines.append(f"Generated by CYS-ilm Reconnaissance Tool v{self.results['metadata']['tool_version']}")
-        lines.append("CYS-ilm Security Team - Confidential")
-        lines.append("=" * 80)
-        
-        return '\n'.join(lines)
-    
-    def _generate_html_content(self) -> str:
-        """Generate HTML report content."""
-        # HTML template with CSS
-        html_template = """
-<!DOCTYPE html>
+        lines += [
+            f"\n{ln}",
+            "  END OF REPORT",
+            f"  Generated by CYS-ILM Recon Tool v{meta.get('tool_version')}",
+            f"  {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+            ln,
+        ]
+        return "\n".join(lines)
+
+    # ── HTML report ───────────────────────────────────────────────
+    def _html(self) -> str:
+        meta    = self.results["metadata"]
+        risk    = self.results.get("risk_assessment", {})
+        passive = self.results.get("passive", {})
+        active  = self.results.get("active",  {})
+        finds   = self.results.get("findings", [])
+
+        rc = _RISK_COLOUR.get(risk.get("risk_level","INFO"), "#17a2b8")
+
+        open_ports_count = len(active.get("port_scan",{}).get("open_ports",[]))
+        sub_count        = passive.get("subdomains",{}).get("total_valid", 0)
+        tech_count       = sum(
+            len(v) for v in (active.get("technologies") or {}).values()
+            if isinstance(v, list)
+        )
+        issues_count     = risk.get("high_count",0) + risk.get("medium_count",0)
+
+        # Build dynamic sections
+        def badge(sev):
+            c = _SEV_COLOUR.get(sev,"#17a2b8")
+            return (f'<span style="background:{c};color:#fff;padding:2px 8px;'
+                    f'border-radius:10px;font-size:.8em;font-weight:700">{sev}</span>')
+
+        # ── Passive section HTML
+        passive_html = ""
+        if passive:
+            # WHOIS
+            if w := passive.get("whois"):
+                rows = ""
+                for k, v in w.items():
+                    if v and k != "error":
+                        val = ", ".join(v) if isinstance(v,list) else str(v)
+                        rows += f"<tr><td><b>{k}</b></td><td>{val[:200]}</td></tr>"
+                if rows:
+                    passive_html += f"""
+                    <div class="card">
+                      <h3>WHOIS Information</h3>
+                      <table>{rows}</table>
+                    </div>"""
+
+            # DNS
+            if dns := passive.get("dns", {}).get("records"):
+                rows = ""
+                for rtype, recs in dns.items():
+                    if recs:
+                        rows += (f"<tr><td><code>{rtype}</code></td>"
+                                 f"<td>{'<br>'.join(str(r) for r in recs)}</td></tr>")
+                if rows:
+                    passive_html += f"""
+                    <div class="card">
+                      <h3>DNS Records</h3>
+                      <table><tr><th>Type</th><th>Records</th></tr>{rows}</table>
+                    </div>"""
+
+            # Subdomains
+            if subs := passive.get("subdomains", {}):
+                rows = ""
+                for s in (subs.get("validated_subdomains") or [])[:50]:
+                    rows += (f"<tr><td>{s['subdomain']}</td>"
+                             f"<td>{s.get('ip_address','')}</td>"
+                             f"<td>{', '.join(s.get('sources',[]))}</td></tr>")
+                if rows:
+                    passive_html += f"""
+                    <div class="card">
+                      <h3>Subdomains
+                        <span class="pill">{subs.get('total_valid',0)} valid</span>
+                      </h3>
+                      <table>
+                        <tr><th>Subdomain</th><th>IP</th><th>Source</th></tr>
+                        {rows}
+                      </table>
+                    </div>"""
+
+            # Email
+            if ei := passive.get("email_info"):
+                passive_html += f"""
+                <div class="card">
+                  <h3>Email Intelligence</h3>
+                  <table>
+                    <tr><td><b>MX</b></td><td>{', '.join(ei.get('mx_records') or ['-'])}</td></tr>
+                    <tr><td><b>SPF</b></td><td>{ei.get('spf') or '<span class="warn">NOT FOUND</span>'}</td></tr>
+                    <tr><td><b>DMARC</b></td><td>{ei.get('dmarc') or '<span class="warn">NOT FOUND</span>'}</td></tr>
+                    <tr><td><b>DKIM</b></td><td>{len(ei.get('dkim') or [])} selector(s)</td></tr>
+                  </table>
+                </div>"""
+
+        # ── Active section HTML
+        active_html = ""
+        if active:
+            if ps := active.get("port_scan", {}):
+                rows = ""
+                for p in ps.get("open_ports",[]):
+                    flag = "🔴" if p.get("risk") else "🟢"
+                    rows += (f"<tr><td>{p['port']}/{p['protocol']}</td>"
+                             f"<td>{p['service']}</td>"
+                             f"<td>{p.get('product','')} {p.get('version','')}</td>"
+                             f"<td>{flag}</td></tr>")
+                stats = ps.get("scan_stats",{})
+                active_html += f"""
+                <div class="card">
+                  <h3>Port Scan
+                    <span class="pill">{len(ps.get('open_ports',[]))} open</span>
+                  </h3>
+                  <p><b>Mode:</b> {ps.get('scan_type','N/A')} &nbsp;
+                     <b>Range:</b> {ps.get('ports_scanned','N/A')}</p>
+                  {"<table><tr><th>Port</th><th>Service</th><th>Product/Version</th><th>Risk</th></tr>" + rows + "</table>" if rows else "<p>No open ports found.</p>"}
+                </div>"""
+
+            if hdrs := active.get("http_headers"):
+                g = hdrs.get("grade","F")
+                gc = {"A":"#28a745","B":"#5cb85c","C":"#f0ad4e","D":"#e67e22","F":"#dc3545"}.get(g,"#dc3545")
+                rows = ""
+                for hdr, info in hdrs.get("security_headers",{}).items():
+                    chk = "✅" if info.get("present") else "❌"
+                    val = (info.get("value") or "")[:80] or "—"
+                    rows += (f"<tr><td>{chk} {hdr}</td>"
+                             f"<td>{val}</td>"
+                             f"<td>{info.get('description','')}</td></tr>")
+                issues_html = "".join(
+                    f'<li class="warn">⚠ {i}</li>'
+                    for i in hdrs.get("issues",[])
+                )
+                active_html += f"""
+                <div class="card">
+                  <h3>HTTP Security Headers
+                    <span class="pill" style="background:{gc}">{g}</span>
+                  </h3>
+                  {"<table><tr><th>Header</th><th>Value</th><th>Purpose</th></tr>" + rows + "</table>" if rows else ""}
+                  {"<ul>" + issues_html + "</ul>" if issues_html else ""}
+                </div>"""
+
+            if techs := active.get("technologies"):
+                tags = "".join(
+                    f'<span class="tag">{t}</span>'
+                    for items in techs.values() if isinstance(items,list)
+                    for t in items
+                )
+                if tags:
+                    active_html += f"""
+                    <div class="card">
+                      <h3>Detected Technologies</h3>
+                      <div style="display:flex;flex-wrap:wrap;gap:6px">{tags}</div>
+                    </div>"""
+
+            if vulns := active.get("vulnerability_checks"):
+                vuln_html = ""
+                for issue in vulns.get("issues",[]):
+                    vuln_html += f'<li style="color:#dc3545">🔴 {issue}</li>'
+                for warn in vulns.get("warnings",[]):
+                    vuln_html += f'<li style="color:#fd7e14">🟡 {warn}</li>'
+                for info in vulns.get("info",[]):
+                    vuln_html += f'<li style="color:#17a2b8">ℹ️ {info}</li>'
+                if vuln_html:
+                    active_html += f"""
+                    <div class="card">
+                      <h3>Vulnerability Checks</h3>
+                      <ul>{vuln_html}</ul>
+                    </div>"""
+
+        # ── Findings table
+        findings_html = ""
+        if finds:
+            rows = ""
+            for f in finds:
+                sev = f.get("severity","INFO")
+                rows += (f"<tr>"
+                         f"<td>{badge(sev)}</td>"
+                         f"<td>{f.get('category','')}</td>"
+                         f"<td><b>{f.get('title','')}</b><br>"
+                         f"<small>{f.get('description','')}</small></td>"
+                         f"<td>{f.get('recommendation','')}</td>"
+                         f"</tr>")
+            findings_html = f"""
+            <div class="card">
+              <table>
+                <tr>
+                  <th>Severity</th><th>Category</th>
+                  <th>Finding</th><th>Recommendation</th>
+                </tr>
+                {rows}
+              </table>
+            </div>"""
+
+        # ── Assemble full HTML ────────────────────────────────────
+        return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CYS-ilm Reconnaissance Report</title>
-    <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-        }
-        
-        body {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
-            padding: 20px;
-        }
-        
-        .container {
-            max-width: 1200px;
-            margin: 0 auto;
-            background: white;
-            border-radius: 15px;
-            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
-            overflow: hidden;
-        }
-        
-        .header {
-            background: linear-gradient(135deg, #2c3e50 0%, #4a6491 100%);
-            color: white;
-            padding: 30px;
-            text-align: center;
-        }
-        
-        .header h1 {
-            font-size: 2.5em;
-            margin-bottom: 10px;
-            background: linear-gradient(135deg, #00b4db, #0083b0);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-        }
-        
-        .header p {
-            opacity: 0.9;
-            font-size: 1.1em;
-        }
-        
-        .metadata {
-            background: #f8f9fa;
-            padding: 20px;
-            border-bottom: 2px solid #dee2e6;
-        }
-        
-        .metadata-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-            gap: 15px;
-        }
-        
-        .metadata-item {
-            background: white;
-            padding: 15px;
-            border-radius: 8px;
-            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
-        }
-        
-        .metadata-label {
-            font-weight: 600;
-            color: #495057;
-            font-size: 0.9em;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-        }
-        
-        .metadata-value {
-            color: #2c3e50;
-            font-size: 1.1em;
-            margin-top: 5px;
-        }
-        
-        .risk-badge {
-            display: inline-block;
-            padding: 5px 15px;
-            border-radius: 20px;
-            font-weight: bold;
-            text-transform: uppercase;
-            font-size: 0.9em;
-            letter-spacing: 0.5px;
-        }
-        
-        .risk-high {
-            background: #dc3545;
-            color: white;
-        }
-        
-        .risk-medium {
-            background: #ffc107;
-            color: #212529;
-        }
-        
-        .risk-low {
-            background: #28a745;
-            color: white;
-        }
-        
-        .risk-info {
-            background: #17a2b8;
-            color: white;
-        }
-        
-        .section {
-            padding: 30px;
-            border-bottom: 1px solid #dee2e6;
-        }
-        
-        .section-header {
-            display: flex;
-            align-items: center;
-            margin-bottom: 25px;
-            padding-bottom: 15px;
-            border-bottom: 2px solid #e9ecef;
-        }
-        
-        .section-icon {
-            width: 50px;
-            height: 50px;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            border-radius: 10px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            margin-right: 15px;
-            color: white;
-            font-size: 1.5em;
-        }
-        
-        .section-title {
-            font-size: 1.8em;
-            color: #2c3e50;
-            font-weight: 600;
-        }
-        
-        .subsection {
-            margin-bottom: 25px;
-            background: white;
-            border-radius: 10px;
-            padding: 20px;
-            box-shadow: 0 3px 10px rgba(0,0,0,0.08);
-            border: 1px solid #e9ecef;
-        }
-        
-        .subsection-title {
-            font-size: 1.3em;
-            color: #495057;
-            margin-bottom: 15px;
-            padding-bottom: 10px;
-            border-bottom: 1px solid #dee2e6;
-            font-weight: 600;
-        }
-        
-        .data-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-            gap: 15px;
-        }
-        
-        .data-item {
-            background: #f8f9fa;
-            padding: 12px;
-            border-radius: 6px;
-            border-left: 4px solid #667eea;
-        }
-        
-        .data-label {
-            font-weight: 600;
-            color: #495057;
-            font-size: 0.9em;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-        }
-        
-        .data-value {
-            color: #2c3e50;
-            margin-top: 5px;
-            font-size: 1em;
-            word-break: break-word;
-        }
-        
-        .table-container {
-            overflow-x: auto;
-            margin-top: 15px;
-        }
-        
-        table {
-            width: 100%;
-            border-collapse: collapse;
-            margin: 10px 0;
-            background: white;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
-            border-radius: 8px;
-            overflow: hidden;
-        }
-        
-        th {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            padding: 12px 15px;
-            text-align: left;
-            font-weight: 600;
-            text-transform: uppercase;
-            font-size: 0.85em;
-            letter-spacing: 0.5px;
-        }
-        
-        td {
-            padding: 12px 15px;
-            border-bottom: 1px solid #dee2e6;
-            color: #495057;
-        }
-        
-        tr:hover {
-            background-color: #f8f9fa;
-        }
-        
-        .port-open {
-            background-color: #d4edda !important;
-            color: #155724;
-        }
-        
-        .port-filtered {
-            background-color: #fff3cd !important;
-            color: #856404;
-        }
-        
-        .severity-badge {
-            display: inline-block;
-            padding: 3px 10px;
-            border-radius: 12px;
-            font-size: 0.8em;
-            font-weight: bold;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-        }
-        
-        .severity-high {
-            background: #dc3545;
-            color: white;
-        }
-        
-        .severity-medium {
-            background: #ffc107;
-            color: #212529;
-        }
-        
-        .severity-low {
-            background: #28a745;
-            color: white;
-        }
-        
-        .severity-info {
-            background: #17a2b8;
-            color: white;
-        }
-        
-        .footer {
-            background: #2c3e50;
-            color: white;
-            padding: 25px;
-            text-align: center;
-            font-size: 0.9em;
-            opacity: 0.9;
-        }
-        
-        .footer p {
-            margin: 5px 0;
-        }
-        
-        .timestamp {
-            font-size: 0.8em;
-            color: #adb5bd;
-            margin-top: 10px;
-        }
-        
-        .summary-cards {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 20px;
-            margin: 20px 0;
-        }
-        
-        .summary-card {
-            background: white;
-            padding: 20px;
-            border-radius: 10px;
-            text-align: center;
-            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
-            border: 2px solid transparent;
-            transition: all 0.3s ease;
-        }
-        
-        .summary-card:hover {
-            transform: translateY(-5px);
-            border-color: #667eea;
-        }
-        
-        .summary-number {
-            font-size: 2.5em;
-            font-weight: bold;
-            color: #667eea;
-            margin: 10px 0;
-        }
-        
-        .summary-label {
-            color: #6c757d;
-            text-transform: uppercase;
-            letter-spacing: 1px;
-            font-size: 0.9em;
-        }
-        
-        @media (max-width: 768px) {
-            .container {
-                border-radius: 10px;
-                margin: 10px;
-            }
-            
-            .header {
-                padding: 20px;
-            }
-            
-            .header h1 {
-                font-size: 1.8em;
-            }
-            
-            .section {
-                padding: 20px;
-            }
-            
-            .data-grid {
-                grid-template-columns: 1fr;
-            }
-            
-            .summary-cards {
-                grid-template-columns: repeat(2, 1fr);
-            }
-        }
-        
-        @media (max-width: 480px) {
-            .summary-cards {
-                grid-template-columns: 1fr;
-            }
-            
-            .metadata-grid {
-                grid-template-columns: 1fr;
-            }
-        }
-        
-        .tech-tag {
-            display: inline-block;
-            background: #e9ecef;
-            padding: 3px 8px;
-            border-radius: 12px;
-            margin: 2px;
-            font-size: 0.85em;
-            color: #495057;
-        }
-    </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CYS-ILM Recon Report – {meta.get('target')}</title>
+<style>
+*{{margin:0;padding:0;box-sizing:border-box;font-family:'Segoe UI',system-ui,sans-serif}}
+body{{background:#0d1117;color:#c9d1d9;line-height:1.6;padding:20px}}
+a{{color:#58a6ff}}
+.wrap{{max-width:1200px;margin:0 auto}}
+/* header */
+header{{background:linear-gradient(135deg,#161b22 0%,#1f2937 100%);
+       border:1px solid #30363d;border-radius:12px;padding:32px;margin-bottom:20px}}
+header h1{{font-size:2rem;color:#58a6ff;margin-bottom:6px}}
+header p{{color:#8b949e;font-size:.95rem}}
+/* meta grid */
+.meta{{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));
+      gap:12px;margin-bottom:20px}}
+.meta-item{{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:14px}}
+.meta-item .lbl{{font-size:.75rem;text-transform:uppercase;letter-spacing:.5px;color:#8b949e}}
+.meta-item .val{{font-size:1.1rem;color:#e6edf3;margin-top:4px;font-weight:600}}
+/* stat cards */
+.stats{{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:20px}}
+.stat{{background:#161b22;border:1px solid #30363d;border-radius:8px;
+      padding:20px;text-align:center;transition:transform .2s}}
+.stat:hover{{transform:translateY(-3px)}}
+.stat .num{{font-size:2.4rem;font-weight:700;color:#58a6ff}}
+.stat .lbl{{font-size:.8rem;text-transform:uppercase;color:#8b949e;margin-top:4px}}
+/* section */
+.section{{margin-bottom:28px}}
+.section h2{{font-size:1.3rem;color:#e6edf3;margin-bottom:12px;
+            padding-bottom:8px;border-bottom:1px solid #30363d;
+            display:flex;align-items:center;gap:8px}}
+/* card */
+.card{{background:#161b22;border:1px solid #30363d;border-radius:8px;
+      padding:20px;margin-bottom:14px}}
+.card h3{{font-size:1rem;color:#e6edf3;margin-bottom:12px;
+         display:flex;align-items:center;gap:8px}}
+/* table */
+table{{width:100%;border-collapse:collapse;font-size:.9rem}}
+th{{background:#21262d;padding:10px 12px;text-align:left;
+   color:#8b949e;font-weight:600;font-size:.8rem;text-transform:uppercase}}
+td{{padding:9px 12px;border-bottom:1px solid #21262d;color:#c9d1d9}}
+tr:last-child td{{border-bottom:none}}
+tr:hover td{{background:#21262d55}}
+/* misc */
+.pill{{background:#388bfd33;color:#58a6ff;border-radius:12px;
+      padding:2px 10px;font-size:.8rem;font-weight:600}}
+.tag{{background:#21262d;border:1px solid #30363d;color:#79c0ff;
+     padding:3px 10px;border-radius:20px;font-size:.82rem}}
+.warn{{color:#f0883e}}
+code{{background:#21262d;padding:1px 6px;border-radius:4px;font-size:.85rem}}
+ul{{list-style:none;padding-left:0}}
+ul li{{padding:4px 0;font-size:.9rem}}
+footer{{text-align:center;color:#8b949e;font-size:.85rem;margin-top:30px;
+       padding-top:20px;border-top:1px solid #30363d}}
+@media(max-width:600px){{.stats{{grid-template-columns:repeat(2,1fr)}}}}
+</style>
 </head>
 <body>
-    <div class="container">
-        <div class="header">
-            <h1>🔍 CYS-ilm Reconnaissance Report</h1>
-            <p>Comprehensive Security Assessment</p>
-        </div>
-        
-        <div class="metadata">
-            <div class="metadata-grid">
-                <div class="metadata-item">
-                    <div class="metadata-label">Target</div>
-                    <div class="metadata-value">{{ target }}</div>
-                </div>
-                <div class="metadata-item">
-                    <div class="metadata-label">Scan ID</div>
-                    <div class="metadata-value">{{ scan_id }}</div>
-                </div>
-                <div class="metadata-item">
-                    <div class="metadata-label">Start Time</div>
-                    <div class="metadata-value">{{ start_time }}</div>
-                </div>
-                <div class="metadata-item">
-                    <div class="metadata-label">Risk Level</div>
-                    <div class="metadata-value">
-                        <span class="risk-badge {{ risk_class }}">{{ risk_level }}</span>
-                    </div>
-                </div>
-            </div>
-        </div>
-        
-        <div class="section">
-            <div class="section-header">
-                <div class="section-icon">📊</div>
-                <div class="section-title">Executive Summary</div>
-            </div>
-            
-            <div class="summary-cards">
-                <div class="summary-card">
-                    <div class="summary-number">{{ open_ports }}</div>
-                    <div class="summary-label">Open Ports</div>
-                </div>
-                <div class="summary-card">
-                    <div class="summary-number">{{ subdomains }}</div>
-                    <div class="summary-label">Subdomains</div>
-                </div>
-                <div class="summary-card">
-                    <div class="summary-number">{{ technologies }}</div>
-                    <div class="summary-label">Technologies</div>
-                </div>
-                <div class="summary-card">
-                    <div class="summary-number">{{ vulnerabilities }}</div>
-                    <div class="summary-label">Issues</div>
-                </div>
-            </div>
-        </div>
-        
-        {% if passive %}
-        <div class="section">
-            <div class="section-header">
-                <div class="section-icon">🕵️</div>
-                <div class="section-title">Passive Reconnaissance</div>
-            </div>
-            
-            {% if passive.whois %}
-            <div class="subsection">
-                <div class="subsection-title">WHOIS Information</div>
-                <div class="data-grid">
-                    {% for key, value in passive.whois.items() %}
-                    {% if value and key != 'raw_data' %}
-                    <div class="data-item">
-                        <div class="data-label">{{ key }}</div>
-                        <div class="data-value">
-                            {% if value is iterable and value is not string %}
-                                {% for item in value %}
-                                    {{ item }}<br>
-                                {% endfor %}
-                            {% else %}
-                                {{ value }}
-                            {% endif %}
-                        </div>
-                    </div>
-                    {% endif %}
-                    {% endfor %}
-                </div>
-            </div>
-            {% endif %}
-            
-            {% if passive.dns %}
-            <div class="subsection">
-                <div class="subsection-title">DNS Records</div>
-                <div class="table-container">
-                    <table>
-                        <thead>
-                            <tr>
-                                <th>Type</th>
-                                <th>Records</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {% for record_type, records in passive.dns.records.items() %}
-                            {% if records and record_type != 'error' %}
-                            <tr>
-                                <td>{{ record_type }}</td>
-                                <td>
-                                    {% for record in records %}
-                                    {{ record }}<br>
-                                    {% endfor %}
-                                </td>
-                            </tr>
-                            {% endif %}
-                            {% endfor %}
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-            {% endif %}
-        </div>
-        {% endif %}
-        
-        {% if active %}
-        <div class="section">
-            <div class="section-header">
-                <div class="section-icon">⚡</div>
-                <div class="section-title">Active Reconnaissance</div>
-            </div>
-            
-            {% if active.port_scan and active.port_scan.open_ports %}
-            <div class="subsection">
-                <div class="subsection-title">Open Ports</div>
-                <div class="table-container">
-                    <table>
-                        <thead>
-                            <tr>
-                                <th>Port</th>
-                                <th>Service</th>
-                                <th>Product</th>
-                                <th>Version</th>
-                                <th>State</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {% for port in active.port_scan.open_ports %}
-                            <tr class="port-open">
-                                <td>{{ port.port }}/{{ port.protocol }}</td>
-                                <td>{{ port.service }}</td>
-                                <td>{{ port.product }}</td>
-                                <td>{{ port.version }}</td>
-                                <td>{{ port.state }}</td>
-                            </tr>
-                            {% endfor %}
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-            {% endif %}
-            
-            {% if active.technologies %}
-            <div class="subsection">
-                <div class="subsection-title">Detected Technologies</div>
-                <div class="data-grid">
-                    {% for category, tech_list in active.technologies.items() %}
-                    {% if tech_list and category != 'error' %}
-                    <div class="data-item">
-                        <div class="data-label">{{ category }}</div>
-                        <div class="data-value">
-                            {% for tech in tech_list %}
-                            <span class="tech-tag">{{ tech }}</span>
-                            {% endfor %}
-                        </div>
-                    </div>
-                    {% endif %}
-                    {% endfor %}
-                </div>
-            </div>
-            {% endif %}
-        </div>
-        {% endif %}
-        
-        {% if findings %}
-        <div class="section">
-            <div class="section-header">
-                <div class="section-icon">⚠️</div>
-                <div class="section-title">Findings & Recommendations</div>
-            </div>
-            
-            <div class="table-container">
-                <table>
-                    <thead>
-                        <tr>
-                            <th>Severity</th>
-                            <th>Category</th>
-                            <th>Finding</th>
-                            <th>Recommendation</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% for finding in findings %}
-                        <tr>
-                            <td>
-                                <span class="severity-badge severity-{{ finding.severity|lower }}">
-                                    {{ finding.severity }}
-                                </span>
-                            </td>
-                            <td>{{ finding.category }}</td>
-                            <td>{{ finding.title }}<br><small>{{ finding.description }}</small></td>
-                            <td>{{ finding.recommendation }}</td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
-            </div>
-        </div>
-        {% endif %}
-        
-        <div class="footer">
-            <p>Generated by CYSILM Reconnaissance Tool v{{ tool_version }}</p>
-            <p>CYSILM Security Team - Confidential</p>
-            <p class="timestamp">Report generated: {{ timestamp }}</p>
-        </div>
+<div class="wrap">
+  <!-- header -->
+  <header>
+    <h1>🔍 CYS-ILM Reconnaissance Report</h1>
+    <p>Professional Security Assessment – Confidential</p>
+  </header>
+
+  <!-- metadata -->
+  <div class="meta">
+    <div class="meta-item"><div class="lbl">Target</div><div class="val">{meta.get('target')}</div></div>
+    <div class="meta-item"><div class="lbl">Scan ID</div><div class="val" style="font-size:.9rem">{meta.get('scan_id')}</div></div>
+    <div class="meta-item"><div class="lbl">Started</div><div class="val" style="font-size:.9rem">{meta.get('start_time','')[:19].replace('T',' ')}</div></div>
+    <div class="meta-item">
+      <div class="lbl">Risk Level</div>
+      <div class="val" style="color:{rc}">{risk.get('risk_level','N/A')}
+        <small style="font-size:.7rem;color:#8b949e"> ({risk.get('risk_score',0)}/100)</small>
+      </div>
     </div>
+    <div class="meta-item"><div class="lbl">Operator</div><div class="val">{meta.get('operator','N/A')}</div></div>
+    <div class="meta-item"><div class="lbl">Privileged</div><div class="val">{"Yes" if meta.get("privileged") else "No"}</div></div>
+  </div>
+
+  <!-- stat cards -->
+  <div class="stats">
+    <div class="stat"><div class="num">{open_ports_count}</div><div class="lbl">Open Ports</div></div>
+    <div class="stat"><div class="num">{sub_count}</div><div class="lbl">Subdomains</div></div>
+    <div class="stat"><div class="num">{tech_count}</div><div class="lbl">Technologies</div></div>
+    <div class="stat"><div class="num" style="color:#dc3545">{risk.get('high_count',0)}</div><div class="lbl">High Findings</div></div>
+    <div class="stat"><div class="num" style="color:#fd7e14">{risk.get('medium_count',0)}</div><div class="lbl">Medium Findings</div></div>
+    <div class="stat"><div class="num">{risk.get('total_findings',0)}</div><div class="lbl">Total Findings</div></div>
+  </div>
+
+  <!-- passive -->
+  {"<div class='section'><h2>🕵️ Passive Reconnaissance</h2>" + passive_html + "</div>" if passive_html else ""}
+
+  <!-- active -->
+  {"<div class='section'><h2>⚡ Active Reconnaissance</h2>" + active_html + "</div>" if active_html else ""}
+
+  <!-- findings -->
+  {"<div class='section'><h2>⚠️ Findings &amp; Recommendations</h2>" + findings_html + "</div>" if findings_html else ""}
+
+  <footer>
+    <p>Generated by CYS-ILM Reconnaissance Tool v{meta.get('tool_version')}</p>
+    <p>CYS-ILM Security Team — For Authorized Testing Only</p>
+    <p>{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
+  </footer>
+</div>
 </body>
-</html>
-        """
-        
-        # Prepare data for template
-        target = self.results['metadata']['target']
-        scan_id = self.results['metadata']['scan_id']
-        start_time = self.results['metadata']['start_time']
-        tool_version = self.results['metadata']['tool_version']
-        
-        # Risk assessment
-        risk = self.results.get('risk_assessment', {})
-        risk_level = risk.get('risk_level', 'INFO')
-        risk_class = f"risk-{risk_level.lower()}"
-        
-        # Statistics
-        active = self.results.get('active', {})
-        passive = self.results.get('passive', {})
-        
-        open_ports = len(active.get('port_scan', {}).get('open_ports', []))
-        subdomains = passive.get('subdomains', {}).get('total_valid', 0)
-        
-        tech_data = active.get('technologies', {})
-        technologies = sum(len(techs) for techs in tech_data.values())
-        
-        vuln_data = active.get('vulnerability_checks', {})
-        vulnerabilities = len(vuln_data.get('issues', []))
-        
-        # Create template context
-        context = {
-            'target': target,
-            'scan_id': scan_id,
-            'start_time': start_time,
-            'risk_level': risk_level,
-            'risk_class': risk_class,
-            'open_ports': open_ports,
-            'subdomains': subdomains,
-            'technologies': technologies,
-            'vulnerabilities': vulnerabilities,
-            'passive': passive,
-            'active': active,
-            'findings': self.results.get('findings', []),
-            'tool_version': tool_version,
-            'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        }
-        
-        # Render template
-        template = Template(html_template)
-        return template.render(**context)
+</html>"""
