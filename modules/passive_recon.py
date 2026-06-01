@@ -1,574 +1,312 @@
 """
-Enhanced Passive Reconnaissance Module - OPTIMIZED VERSION
-CYS-ILM Security Tool
+Passive Reconnaissance Module – CYS-ILM v3.0
+Collects open-source intelligence without sending packets to the target.
 """
 
-import whois
-import dns.resolver
-import dns.reversename
-import requests
 import socket
-import json
 import time
 import re
 import ipaddress
-from typing import Dict, List, Any, Optional, Tuple, Set
-from urllib.parse import urlparse, urlunparse
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
+from typing import Dict, Any, List, Optional, Set, Tuple
+from urllib.parse import urlparse
 
-# Configure logging
+import requests
+import whois
+import dns.resolver
+import dns.reversename
+
 logger = logging.getLogger(__name__)
 
+# ── safe request defaults ─────────────────────────────────────────
+_HEADERS = {
+    "User-Agent": "CYS-ILM-Recon/3.0 (security-research)",
+    "Accept":     "application/json",
+}
+_REQ_TIMEOUT = 8   # seconds
+
+
 class PassiveReconnaissance:
-    """CYS-ILM passive reconnaissance operations."""
-    
-    def __init__(self, verbose: bool = False):
-        """Initialize passive reconnaissance module.
-        
-        Args:
-            verbose: Enable verbose logging
-        """
+    """Passive OSINT gathering: WHOIS, DNS, subdomains, reverse IP."""
+
+    def __init__(self, verbose: bool = False) -> None:
         if verbose:
             logger.setLevel(logging.DEBUG)
-        else:
-            logger.setLevel(logging.INFO)
-        
-        # Configure DNS resolver with timeouts
-        self.resolver = dns.resolver.Resolver()
-        self.resolver.timeout = 3  # Reduced timeout
-        self.resolver.lifetime = 5
-        
-        # External API endpoints (with fallbacks)
-        self.apis = {
-            'crtsh': 'https://crt.sh/',
-            'otx': 'https://otx.alienvault.com/api/v1/',
-            'hackertarget': 'https://api.hackertarget.com/',
-        }
-        
-        # Rate limiting
-        self.request_delay = 2.0
-        self.last_request = {}
-        
-        # Common subdomains for checking
+
+        self.resolver             = dns.resolver.Resolver()
+        self.resolver.timeout     = 3
+        self.resolver.lifetime    = 6
+        self._last_req: Dict[str, float] = {}
+        self._req_delay           = 1.5   # seconds between API calls
+
         self.common_subdomains = [
-            'www', 'mail', 'ftp', 'smtp', 'pop', 'imap', 'admin', 'blog',
-            'webmail', 'portal', 'cpanel', 'whm', 'webdisk', 'ns1', 'ns2',
-            'test', 'dev', 'staging', 'api', 'secure', 'vpn', 'm', 'mobile',
-            'static', 'cdn', 'assets', 'support', 'help', 'status'
+            "www","mail","ftp","smtp","pop","imap","admin","blog","webmail",
+            "portal","cpanel","whm","webdisk","ns1","ns2","test","dev",
+            "staging","api","secure","vpn","m","mobile","static","cdn",
+            "assets","support","help","status","login","shop","store",
+            "remote","intranet","internal","gateway","proxy","dns","mx",
         ]
-    
+
+    # ── WHOIS ────────────────────────────────────────────────────
     def whois_lookup(self, domain: str) -> Dict[str, Any]:
-        """Perform WHOIS lookup on domain.
-        
-        Args:
-            domain: Target domain
-            
-        Returns:
-            WHOIS information dictionary
-        """
-        logger.info(f"Starting WHOIS lookup for {domain}")
-        
+        logger.info(f"WHOIS lookup → {domain}")
         try:
-            # Clean domain
-            domain_clean = self._clean_domain(domain)
-            
-            # Perform WHOIS lookup with timeout
-            whois_info = whois.whois(domain_clean)
-            
-            # Extract and format information
-            result = {
-                'domain_name': self._safe_extract(whois_info.domain_name),
-                'registrar': whois_info.registrar,
-                'whois_server': whois_info.whois_server,
-                'creation_date': self._safe_extract(whois_info.creation_date),
-                'expiration_date': self._safe_extract(whois_info.expiration_date),
-                'updated_date': self._safe_extract(whois_info.updated_date),
-                'name_servers': self._safe_extract(whois_info.name_servers),
-                'status': self._safe_extract(whois_info.status),
-                'emails': self._safe_extract(whois_info.emails),
-                'dnssec': whois_info.dnssec if hasattr(whois_info, 'dnssec') else None,
+            info = whois.whois(self._clean(domain))
+            result: Dict[str, Any] = {
+                "domain_name":      self._safe(info.domain_name),
+                "registrar":        info.registrar,
+                "whois_server":     info.whois_server,
+                "creation_date":    self._safe(info.creation_date),
+                "expiration_date":  self._safe(info.expiration_date),
+                "updated_date":     self._safe(info.updated_date),
+                "name_servers":     self._safe(info.name_servers),
+                "status":           self._safe(info.status),
+                "emails":           self._safe(info.emails),
+                "dnssec":           getattr(info, "dnssec", None),
+                "org":              getattr(info, "org", None),
+                "country":          getattr(info, "country", None),
             }
-            
-            # Calculate domain age if possible
-            if result['creation_date']:
-                try:
-                    if isinstance(result['creation_date'], list):
-                        creation = result['creation_date'][0]
-                    else:
-                        creation = result['creation_date']
-                    
-                    if hasattr(creation, 'year'):
-                        age = datetime.now().year - creation.year
-                        result['domain_age_years'] = age
-                except:
-                    pass
-            
-            logger.info(f"WHOIS lookup completed for {domain}")
+            # Compute domain age
+            raw_creation = info.creation_date
+            if isinstance(raw_creation, list):
+                raw_creation = raw_creation[0]
+            if hasattr(raw_creation, "year"):
+                result["domain_age_years"] = datetime.now().year - raw_creation.year
+            logger.info(f"WHOIS complete  registrar={result.get('registrar')}")
             return result
-            
-        except Exception as e:
-            logger.error(f"WHOIS lookup failed: {str(e)}")
-            return {
-                'error': str(e),
-                'domain': domain,
-                'note': 'WHOIS lookup failed'
-            }
-    
-    def dns_enumeration(self, domain: str, record_types: List[str] = None) -> Dict[str, Any]:
-        """Comprehensive DNS record enumeration.
-        
-        Args:
-            domain: Target domain
-            record_types: List of DNS record types to query
-            
-        Returns:
-            DNS records dictionary
-        """
-        logger.info(f"Starting DNS enumeration for {domain}")
-        
+        except Exception as exc:
+            logger.warning(f"WHOIS failed: {exc}")
+            return {"error": str(exc), "domain": domain}
+
+    # ── DNS ──────────────────────────────────────────────────────
+    def dns_enumeration(self, domain: str,
+                        record_types: Optional[List[str]] = None) -> Dict[str, Any]:
         if record_types is None:
-            record_types = ['A', 'AAAA', 'MX', 'TXT', 'NS', 'SOA', 'CNAME']
-        
-        results = {
-            'domain': domain,
-            'records': {},
-            'summary': {},
-            'timestamp': datetime.now().isoformat()
+            record_types = ["A","AAAA","MX","TXT","NS","SOA","CNAME","CAA"]
+        logger.info(f"DNS enumeration → {domain}  types={record_types}")
+
+        records: Dict[str, List[str]] = {}
+        for rtype in record_types:
+            records[rtype] = self._query_dns(domain, rtype)
+
+        # DMARC is a special sub-domain query
+        dmarc = self._query_dns(f"_dmarc.{domain}", "TXT")
+        if any("v=DMARC1" in r for r in dmarc):
+            records["DMARC"] = [r for r in dmarc if "v=DMARC1" in r]
+
+        ip_addrs = records.get("A",[]) + records.get("AAAA",[])
+        total    = sum(len(v) for v in records.values())
+
+        logger.info(f"DNS complete  total_records={total}")
+        return {
+            "domain":    domain,
+            "records":   records,
+            "summary":   {
+                "total_records":        total,
+                "record_types_found":   [k for k,v in records.items() if v],
+                "has_mx":               bool(records.get("MX")),
+                "has_txt":              bool(records.get("TXT")),
+                "has_dmarc":            bool(records.get("DMARC")),
+                "nameservers":          records.get("NS",[]),
+                "ip_addresses":         ip_addrs,
+            },
+            "timestamp": datetime.now().isoformat(),
         }
-        
+
+    def _query_dns(self, name: str, rtype: str) -> List[str]:
         try:
-            # Query each record type
-            for record_type in record_types:
-                try:
-                    answers = self.resolver.resolve(domain, record_type, lifetime=3)
-                    records = []
-                    
-                    for rdata in answers:
-                        if record_type == 'MX':
-                            record_str = f"{rdata.preference} {rdata.exchange}"
-                        else:
-                            record_str = str(rdata)
-                        records.append(record_str)
-                    
-                    if records:
-                        results['records'][record_type] = records
-                    else:
-                        results['records'][record_type] = []
-                        
-                except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN):
-                    results['records'][record_type] = []
-                except dns.resolver.Timeout:
-                    results['records'][record_type] = ['TIMEOUT']
-                except Exception as e:
-                    logger.debug(f"Failed to resolve {record_type} for {domain}: {str(e)}")
-                    results['records'][record_type] = [f'ERROR: {str(e)[:50]}']
-            
-            # Generate summary
-            total_records = sum(len(records) for records in results['records'].values())
-            ip_addresses = results['records'].get('A', []) + results['records'].get('AAAA', [])
-            
-            results['summary'] = {
-                'total_records': total_records,
-                'record_types_found': [rt for rt in results['records'] if results['records'][rt]],
-                'has_mx': bool(results['records'].get('MX')),
-                'has_txt': bool(results['records'].get('TXT')),
-                'nameservers': results['records'].get('NS', []),
-                'ip_addresses': ip_addresses
-            }
-            
-            logger.info(f"DNS enumeration completed for {domain}: {total_records} records found")
+            answers = self.resolver.resolve(name, rtype, lifetime=4)
+            results = []
+            for rdata in answers:
+                if rtype == "MX":
+                    results.append(f"{rdata.preference} {rdata.exchange}")
+                elif rtype == "SOA":
+                    results.append(
+                        f"mname={rdata.mname} rname={rdata.rname} "
+                        f"serial={rdata.serial}"
+                    )
+                else:
+                    results.append(str(rdata))
             return results
-            
-        except Exception as e:
-            logger.error(f"DNS enumeration failed: {str(e)}")
-            return {
-                'error': str(e),
-                'domain': domain,
-                'note': 'DNS enumeration failed'
-            }
-    
+        except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN):
+            return []
+        except dns.resolver.Timeout:
+            return ["[TIMEOUT]"]
+        except Exception as exc:
+            logger.debug(f"DNS {rtype} query for {name}: {exc}")
+            return []
+
+    # ── Subdomain discovery ───────────────────────────────────────
     def subdomain_discovery(self, domain: str, **kwargs) -> Dict[str, Any]:
-        """Discover subdomains using multiple techniques.
-        
-        Args:
-            domain: Target domain
-            **kwargs: Additional options
-            
-        Returns:
-            Subdomain discovery results
-        """
-        logger.info(f"Starting subdomain discovery for {domain}")
-        
-        use_crtsh = kwargs.get('use_crtsh', True)
-        use_otx = kwargs.get('use_otx', False)  # Disabled by default due to rate limits
-        brute_force = kwargs.get('brute_force', False)
-        
-        all_subdomains = set()
-        sources = {}
-        
-        try:
-            # Method 1: Certificate Transparency (crt.sh)
-            if use_crtsh:
-                logger.debug(f"Searching crt.sh for {domain} subdomains...")
-                crt_subdomains = self._query_crtsh_api(domain)
-                sources['crt_sh'] = sorted(crt_subdomains)
-                all_subdomains.update(crt_subdomains)
-                logger.debug(f"crt.sh found {len(crt_subdomains)} subdomains")
-            
-            # Method 2: Check common subdomains
-            logger.debug(f"Checking common subdomains for {domain}...")
-            common_subdomains = self._check_common_subdomains(domain)
-            sources['common_patterns'] = sorted(common_subdomains)
-            all_subdomains.update(common_subdomains)
-            logger.debug(f"Common patterns found {len(common_subdomains)} subdomains")
-            
-            # Method 3: AlienVault OTX (optional)
-            if use_otx:
-                logger.debug(f"Searching AlienVault OTX for {domain} subdomains...")
-                otx_subdomains = self._query_otx_api(domain)
-                sources['alienvault_otx'] = sorted(otx_subdomains)
-                all_subdomains.update(otx_subdomains)
-                logger.debug(f"OTX found {len(otx_subdomains)} subdomains")
-            
-            # Validate discovered subdomains
-            validated_subdomains = []
-            unique_subdomains = sorted(list(all_subdomains))
-            
-            logger.info(f"Validating {len(unique_subdomains)} discovered subdomains...")
-            
-            # Use thread pool for faster validation
-            with ThreadPoolExecutor(max_workers=10) as executor:
-                future_to_subdomain = {
-                    executor.submit(self._validate_subdomain, subdomain): subdomain 
-                    for subdomain in unique_subdomains[:50]  # Limit to first 50 for speed
-                }
-                
-                for future in as_completed(future_to_subdomain):
-                    subdomain = future_to_subdomain[future]
-                    try:
-                        is_valid, ip_address = future.result(timeout=3)
-                        if is_valid:
-                            validated_subdomains.append({
-                                'subdomain': subdomain,
-                                'ip_address': ip_address,
-                                'source': self._identify_source(subdomain, sources)
-                            })
-                    except Exception as e:
-                        logger.debug(f"Validation failed for {subdomain}: {str(e)}")
-            
-            # Organize results
-            results = {
-                'domain': domain,
-                'total_discovered': len(unique_subdomains),
-                'total_valid': len(validated_subdomains),
-                'sources': {k: len(v) for k, v in sources.items()},
-                'validated_subdomains': validated_subdomains,
-                'by_ip': self._group_by_ip(validated_subdomains),
-                'timestamp': datetime.now().isoformat()
-            }
-            
-            logger.info(f"Subdomain discovery completed: {len(validated_subdomains)} valid subdomains found")
-            return results
-            
-        except Exception as e:
-            logger.error(f"Subdomain discovery failed: {str(e)}")
-            return {
-                'error': str(e),
-                'domain': domain,
-                'note': 'Subdomain discovery failed'
-            }
-    
-    def reverse_ip_lookup(self, target: str) -> Dict[str, Any]:
-        """Perform reverse IP lookup to find domains sharing IP.
-        
-        Args:
-            target: Domain or IP address
-            
-        Returns:
-            Reverse lookup results
-        """
-        logger.info(f"Starting reverse IP lookup for {target}")
-        
-        try:
-            # Get IP if domain is provided
-            if not self._is_ip(target):
-                ip_address = socket.gethostbyname(target)
-            else:
-                ip_address = target
-            
-            # Skip API call for now (due to timeouts)
-            # Could implement local DNS PTR lookup instead
-            
-            results = {
-                'ip_address': ip_address,
-                'shared_domains': [],
-                'total_domains': 0,
-                'note': 'Reverse IP lookup skipped (API timeouts)'
-            }
-            
-            logger.info(f"Reverse IP lookup completed for {ip_address}")
-            return results
-            
-        except Exception as e:
-            logger.error(f"Reverse IP lookup failed: {str(e)}")
-            return {
-                'error': str(e),
-                'target': target,
-                'note': 'Reverse IP lookup failed'
-            }
-    
-    def find_related_domains(self, domain: str) -> Dict[str, Any]:
-        """Find domains related to target.
-        
-        Args:
-            domain: Target domain
-            
-        Returns:
-            Related domains information
-        """
-        logger.info(f"Finding related domains for {domain}")
-        
-        results = {
-            'primary_domain': domain,
-            'similar_names': [],
-            'same_ip_range': [],
-            'same_registrar': [],
-            'same_nameservers': [],
-            'note': 'Basic related domain check'
+        logger.info(f"Subdomain discovery → {domain}")
+        all_subs: Set[str] = set()
+        sources:  Dict[str, List[str]] = {}
+
+        if kwargs.get("use_crtsh", True):
+            found = self._crtsh(domain)
+            sources["crt_sh"] = sorted(found)
+            all_subs.update(found)
+            logger.debug(f"crt.sh  → {len(found)} subdomains")
+
+        found = self._common_subdomain_check(domain)
+        sources["brute_common"] = sorted(found)
+        all_subs.update(found)
+        logger.debug(f"brute   → {len(found)} subdomains")
+
+        unique = sorted(all_subs)[:100]   # cap at 100 for speed
+        logger.info(f"Validating {len(unique)} unique candidates …")
+
+        validated: List[Dict[str, Any]] = []
+        with ThreadPoolExecutor(max_workers=15) as pool:
+            futures = {pool.submit(self._validate_sub, s): s for s in unique}
+            for fut in as_completed(futures):
+                sub = futures[fut]
+                try:
+                    ok, ip = fut.result(timeout=4)
+                    if ok:
+                        validated.append({
+                            "subdomain":  sub,
+                            "ip_address": ip,
+                            "sources":    [k for k,v in sources.items() if sub in v],
+                        })
+                except Exception:
+                    pass
+
+        validated.sort(key=lambda x: x["subdomain"])
+        logger.info(f"Subdomain discovery complete  valid={len(validated)}")
+        return {
+            "domain":              domain,
+            "total_discovered":    len(unique),
+            "total_valid":         len(validated),
+            "sources":             {k: len(v) for k,v in sources.items()},
+            "validated_subdomains": validated,
+            "by_ip":               self._group_by_ip(validated),
+            "timestamp":           datetime.now().isoformat(),
         }
-        
+
+    def _crtsh(self, domain: str) -> Set[str]:
+        self._rate_limit("crtsh")
         try:
-            # Get base name and TLD
-            parts = domain.split('.')
-            if len(parts) >= 2:
-                base_name = parts[-2]
-                tld = parts[-1]
-                
-                # Quick check for common variations (limited to avoid timeouts)
-                common_variations = [
-                    f"{base_name}-test.{tld}",
-                    f"test-{base_name}.{tld}",
-                    f"{base_name}1.{tld}",
-                ]
-                
-                # Check with timeout
-                for variation in common_variations:
-                    try:
-                        # Set socket timeout
-                        socket.setdefaulttimeout(2)
-                        socket.gethostbyname(variation)
-                        results['similar_names'].append(variation)
-                    except:
-                        pass
-            
-            logger.info(f"Related domains check completed for {domain}")
-            return results
-            
-        except Exception as e:
-            logger.error(f"Finding related domains failed: {str(e)}")
+            r = requests.get(
+                "https://crt.sh/",
+                params={"q": f"%.{domain}", "output": "json"},
+                headers=_HEADERS,
+                timeout=_REQ_TIMEOUT,
+            )
+            if r.status_code != 200:
+                return set()
+            found: Set[str] = set()
+            for entry in r.json():
+                for name in entry.get("name_value","").split("\n"):
+                    name = name.strip().lstrip("*.").lower()
+                    if name.endswith(f".{domain}") or name == domain:
+                        found.add(name)
+            return found
+        except Exception as exc:
+            logger.debug(f"crt.sh error: {exc}")
+            return set()
+
+    def _common_subdomain_check(self, domain: str) -> Set[str]:
+        found: Set[str] = set()
+        for sub in self.common_subdomains:
+            fqdn = f"{sub}.{domain}"
+            try:
+                socket.setdefaulttimeout(1.5)
+                socket.gethostbyname(fqdn)
+                found.add(fqdn)
+            except Exception:
+                pass
+        socket.setdefaulttimeout(None)
+        return found
+
+    def _validate_sub(self, sub: str) -> Tuple[bool, Optional[str]]:
+        try:
+            socket.setdefaulttimeout(2)
+            ip = socket.gethostbyname(sub)
+            return True, ip
+        except Exception:
+            return False, None
+        finally:
+            socket.setdefaulttimeout(None)
+
+    # ── Reverse IP ───────────────────────────────────────────────
+    def reverse_ip_lookup(self, target: str) -> Dict[str, Any]:
+        logger.info(f"Reverse IP lookup → {target}")
+        try:
+            ip = socket.gethostbyname(target) if not self._is_ip(target) else target
+            # PTR record
+            ptr: List[str] = []
+            try:
+                rev = dns.reversename.from_address(ip)
+                answers = self.resolver.resolve(rev, "PTR", lifetime=4)
+                ptr = [str(a) for a in answers]
+            except Exception:
+                pass
+
             return {
-                'error': str(e),
-                'domain': domain,
-                'note': 'Related domains check failed'
+                "ip_address":     ip,
+                "ptr_records":    ptr,
+                "timestamp":      datetime.now().isoformat(),
             }
-    
-    # ========== HELPER METHODS ==========
-    
-    def _clean_domain(self, domain: str) -> str:
-        """Remove protocol and path from domain."""
-        if '://' in domain:
+        except Exception as exc:
+            logger.warning(f"Reverse IP failed: {exc}")
+            return {"error": str(exc), "target": target}
+
+    # ── Email harvest (MX / header) ──────────────────────────────
+    def email_harvest(self, domain: str) -> Dict[str, Any]:
+        """Gather email-related DNS intelligence (MX, SPF, DMARC, DKIM)."""
+        logger.info(f"Email intelligence → {domain}")
+        mx      = self._query_dns(domain, "MX")
+        txt     = self._query_dns(domain, "TXT")
+        spf     = next((r for r in txt if "v=spf1" in r), None)
+        dmarc   = self._query_dns(f"_dmarc.{domain}", "TXT")
+        dkim_selectors = ["default","google","k1","mail","dkim","selector1","selector2"]
+        dkim_found: List[str] = []
+        for sel in dkim_selectors:
+            res = self._query_dns(f"{sel}._domainkey.{domain}", "TXT")
+            if res and not res[0].startswith("["):
+                dkim_found.append(f"{sel}: {res[0][:80]}…")
+        return {
+            "mx_records": mx,
+            "spf":        spf,
+            "dmarc":      dmarc[0] if dmarc else None,
+            "dkim":       dkim_found,
+        }
+
+    # ── helpers ───────────────────────────────────────────────────
+    def _clean(self, domain: str) -> str:
+        if "://" in domain:
             parsed = urlparse(domain)
             domain = parsed.netloc or parsed.path
-        return domain.strip().lower()
-    
-    def _safe_extract(self, value) -> Any:
-        """Extract and format WHOIS values safely."""
+        return domain.strip().lower().split("/")[0]
+
+    def _safe(self, value: Any) -> Any:
         if value is None:
             return None
-        elif isinstance(value, list):
+        if isinstance(value, list):
             return [str(v) for v in value if v is not None]
-        else:
-            return str(value)
-    
-    def _rate_limit(self, api_name: str):
-        """Implement rate limiting."""
-        current_time = time.time()
-        
-        if api_name in self.last_request:
-            time_since = current_time - self.last_request[api_name]
-            if time_since < self.request_delay:
-                time.sleep(self.request_delay - time_since)
-        
-        self.last_request[api_name] = time.time()
-    
-    def _is_ip(self, address: str) -> bool:
-        """Check if string is an IP address."""
+        return str(value)
+
+    def _is_ip(self, addr: str) -> bool:
         try:
-            ipaddress.ip_address(address)
+            ipaddress.ip_address(addr)
             return True
         except ValueError:
             return False
-    
-    def _query_crtsh_api(self, domain: str) -> Set[str]:
-        """Query crt.sh API for subdomains."""
-        try:
-            self._rate_limit('crtsh')
-            
-            params = {
-                'q': f'%.{domain}',
-                'output': 'json'
-            }
-            
-            response = requests.get(self.apis['crtsh'], params=params, timeout=5)
-            
-            if response.status_code != 200:
-                logger.warning(f"crt.sh API returned status {response.status_code}")
-                return set()
-            
-            data = response.json()
-            domains = set()
-            
-            for entry in data:
-                name_value = entry.get('name_value', '')
-                if name_value:
-                    # Split by newlines and clean up
-                    for name in name_value.split('\n'):
-                        name = name.strip().lower()
-                        if domain in name:
-                            # Remove wildcards and clean
-                            name = name.replace('*.', '').strip()
-                            if name and domain in name:
-                                domains.add(name)
-            
-            return domains
-            
-        except requests.Timeout:
-            logger.warning("crt.sh API timeout")
-            return set()
-        except Exception as e:
-            logger.warning(f"crt.sh API query failed: {str(e)[:100]}")
-            return set()
-    
-    def _query_otx_api(self, domain: str) -> Set[str]:
-        """Query AlienVault OTX API."""
-        try:
-            self._rate_limit('otx')
-            
-            url = f"{self.apis['otx']}indicators/domain/{domain}/passive_dns"
-            headers = {
-                'User-Agent': 'CYS-ILM-Recon-Tool/2.0',
-                'Accept': 'application/json'
-            }
-            
-            response = requests.get(url, headers=headers, timeout=5)
-            
-            if response.status_code == 429:  # Rate limited
-                logger.warning("OTX API rate limited")
-                return set()
-            elif response.status_code != 200:
-                logger.warning(f"OTX API returned status {response.status_code}")
-                return set()
-            
-            data = response.json()
-            domains = set()
-            
-            for entry in data.get('passive_dns', []):
-                hostname = entry.get('hostname', '')
-                if hostname and domain in hostname:
-                    domains.add(hostname.lower())
-            
-            return domains
-            
-        except requests.Timeout:
-            logger.warning("OTX API timeout")
-            return set()
-        except Exception as e:
-            logger.warning(f"OTX API query failed: {str(e)[:100]}")
-            return set()
-    
-    def _check_common_subdomains(self, domain: str) -> Set[str]:
-        """Check for commonly used subdomains."""
-        domains = set()
-        
-        # Check only a subset for speed
-        for sub in self.common_subdomains[:20]:  # Limit to first 20
-            full_domain = f"{sub}.{domain}"
-            try:
-                # Set timeout
-                socket.setdefaulttimeout(2)
-                socket.gethostbyname(full_domain)
-                domains.add(full_domain)
-            except:
-                pass
-        
-        return domains
-    
-    def _validate_subdomain(self, subdomain: str) -> Tuple[bool, Optional[str]]:
-        """Validate if subdomain exists and get its IP."""
-        try:
-            # Set timeout
-            socket.setdefaulttimeout(3)
-            ip_address = socket.gethostbyname(subdomain)
-            return True, ip_address
-        except socket.gaierror:
-            return False, None
-        except:
-            return False, None
-    
-    def _identify_source(self, subdomain: str, sources: Dict[str, List[str]]) -> List[str]:
-        """Identify which source discovered the subdomain."""
-        identified_sources = []
-        
-        for source_name, source_subs in sources.items():
-            if subdomain in source_subs:
-                identified_sources.append(source_name)
-        
-        return identified_sources if identified_sources else ['unknown']
-    
-    def _group_by_ip(self, subdomains: List[Dict]) -> Dict[str, List[str]]:
-        """Group subdomains by IP address."""
-        groups = {}
-        
-        for sub in subdomains:
-            ip = sub.get('ip_address')
+
+    def _rate_limit(self, key: str) -> None:
+        now     = time.monotonic()
+        elapsed = now - self._last_req.get(key, 0)
+        if elapsed < self._req_delay:
+            time.sleep(self._req_delay - elapsed)
+        self._last_req[key] = time.monotonic()
+
+    def _group_by_ip(self, subs: List[Dict]) -> Dict[str, List[str]]:
+        groups: Dict[str, List[str]] = {}
+        for s in subs:
+            ip = s.get("ip_address")
             if ip:
-                if ip not in groups:
-                    groups[ip] = []
-                groups[ip].append(sub['subdomain'])
-        
+                groups.setdefault(ip, []).append(s["subdomain"])
         return groups
-    
-    def _query_hackertarget_api(self, domain: str) -> Set[str]:
-        """Query HackerTarget API (disabled due to timeouts)."""
-        # This API often times out, so we'll skip it
-        logger.debug("Skipping HackerTarget API (known timeout issues)")
-        return set()
-    
-    def _check_spf_record(self, txt_records: List[str]) -> Optional[str]:
-        """Check for SPF record in TXT records."""
-        for record in txt_records:
-            if record and 'v=spf1' in record:
-                return record
-        return None
-    
-    def _check_dmarc_record(self, domain: str) -> Optional[str]:
-        """Check for DMARC record."""
-        try:
-            answers = self.resolver.resolve(f'_dmarc.{domain}', 'TXT', lifetime=2)
-            for rdata in answers:
-                record = str(rdata)
-                if 'v=DMARC1' in record:
-                    return record
-        except:
-            pass
-        return None
-    
-    def _check_dnssec(self, domain: str) -> Optional[bool]:
-        """Check if DNSSEC is enabled for domain."""
-        try:
-            self.resolver.resolve(domain, 'DNSKEY', lifetime=2)
-            return True
-        except:
-            return False
