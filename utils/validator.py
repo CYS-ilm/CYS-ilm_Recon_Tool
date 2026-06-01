@@ -1,124 +1,93 @@
 """
-Input validation utilities.
+Input validation utilities – hardened against injection and malformed input.
 """
 
 import re
 import socket
 import ipaddress
-from typing import Union
 from urllib.parse import urlparse
 
 
+# ── public API ────────────────────────────────────────────────────
 def validate_input(target: str) -> bool:
-    """Validate if input is a valid domain or IP address.
-    
-    Args:
-        target: Input to validate
-        
-    Returns:
-        True if valid, False otherwise
-    """
-    target = sanitize_target(target)
-    
-    # Check if it's a valid IP address
-    if is_valid_ip(target):
-        return True
-    
-    # Check if it's a valid domain
-    if is_valid_domain(target):
-        return True
-    
-    return False
+    """Return True if *target* is a syntactically valid domain or IP."""
+    if not target or len(target) > 255:
+        return False
+    t = sanitize_target(target)
+    return is_valid_ip(t) or is_valid_domain(t)
 
 
 def sanitize_target(target: str) -> str:
-    """Clean and sanitize target input.
-    
-    Args:
-        target: Target domain or IP
-        
-    Returns:
-        Sanitized target string
+    """
+    Strip protocol, path, query-string and port from an arbitrary user string.
+    Returns a lowercase hostname/IP (bare – no brackets, no port).
     """
     if not target:
         return ""
-    
-    # Remove protocol if present
-    target = target.strip().lower()
-    if '://' in target:
+    target = target.strip()
+
+    # Strip protocol via urlparse (handles IPv6 brackets correctly)
+    if "://" in target:
         parsed = urlparse(target)
-        target = parsed.netloc or parsed.path
-    
-    # Remove trailing slashes and paths
-    target = target.split('/')[0]
-    
-    return target
+        # parsed.hostname already strips port and brackets
+        target = parsed.hostname or parsed.netloc or parsed.path
+
+    # At this point we may have:
+    #   host.example.com
+    #   host.example.com:8080
+    #   [::1]:443
+    #   ::1
+
+    # Strip path/query/fragment (only up to first '/')
+    target = target.split("/")[0].split("?")[0].split("#")[0]
+
+    # Strip brackets and trailing port for bracketed IPv6 like [::1]:443
+    if target.startswith("["):
+        target = target.lstrip("[").split("]")[0]
+    elif ":" in target and target.count(":") == 1:
+        # single colon → hostname:port (not IPv6)
+        target = target.rsplit(":", 1)[0]
+    # else: bare IPv6 (multiple colons) or plain hostname – leave as-is
+
+    return target.lower()
 
 
-def is_valid_ip(ip_str: str) -> bool:
-    """Check if string is a valid IP address.
-    
-    Args:
-        ip_str: String to check
-        
-    Returns:
-        True if valid IP, False otherwise
-    """
+def is_valid_ip(addr: str) -> bool:
     try:
-        ipaddress.ip_address(ip_str)
+        ipaddress.ip_address(addr.strip("[]"))
         return True
     except ValueError:
         return False
 
 
 def is_valid_domain(domain: str) -> bool:
-    """Check if string is a valid domain name.
-    
-    Args:
-        domain: Domain to validate
-        
-    Returns:
-        True if valid domain, False otherwise
     """
-    # Basic domain pattern validation
-    if not domain or len(domain) > 255:
+    Validate domain name:
+      - Only alphanumeric, hyphens and dots
+      - Each label <= 63 chars, no leading/trailing hyphen
+      - At least two labels (needs a TLD)
+    """
+    if not domain or len(domain) > 253:
         return False
-    
-    # Check for invalid characters
-    if re.search(r'[^a-zA-Z0-9.-]', domain):
+    if re.search(r"[^a-zA-Z0-9.\-]", domain):
         return False
-    
-    # Check if it has at least one dot and correct TLD
-    parts = domain.split('.')
-    if len(parts) < 2:
+    labels = domain.split(".")
+    if len(labels) < 2:
         return False
-    
-    # Check each part
-    for part in parts:
-        if not part or len(part) > 63:
+    for label in labels:
+        if not label or len(label) > 63:
             return False
-        if part.startswith('-') or part.endswith('-'):
+        if label.startswith("-") or label.endswith("-"):
             return False
-    
+        if not re.match(r"^[a-zA-Z0-9\-]+$", label):
+            return False
     return True
 
 
 def is_reachable(target: str, port: int = 80, timeout: float = 2.0) -> bool:
-    """Check if target is reachable.
-    
-    Args:
-        target: Domain or IP
-        port: Port to check
-        timeout: Connection timeout
-        
-    Returns:
-        True if reachable
-    """
+    """TCP connectivity check."""
     try:
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(timeout)
-        result = sock.connect_ex((target, port))
-        sock.close()
-        return result == 0
+        with socket.create_connection((target, port), timeout=timeout):
+            return True
     except Exception:
         return False
